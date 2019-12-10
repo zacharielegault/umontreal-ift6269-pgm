@@ -96,7 +96,7 @@ class ClusteringMethod:
     def score(self, z, true_labels):
         assert self.labels is not None, "Cannot compute clustering scores before fitting the data."
 
-        self.silhouette_score = silhouette_score(z, true_labels)
+        self.silhouette_score = silhouette_score(z, self.labels)
         self.nmi = NMI(true_labels, self.labels, average_method="geometric")  # Same average as original paper
         self.ari = ARI(true_labels, self.labels)
 
