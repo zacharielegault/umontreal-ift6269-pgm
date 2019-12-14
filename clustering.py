@@ -41,9 +41,9 @@ def parse_args():
     return parser.parse_args()
 
 
-def plot_clustering(X, labels, legend=False):
+def plot_clustering(X, labels, legend=False, s=10, alpha=0.5):
     for label in np.unique(labels):
-        plt.scatter(X[labels == label][:, 0], X[labels == label][:, 1], s=10, alpha=0.5)
+        plt.scatter(X[labels == label][:, 0], X[labels == label][:, 1], s=s, alpha=alpha)
 
     if legend:
         plt.legend(np.unique(labels))
