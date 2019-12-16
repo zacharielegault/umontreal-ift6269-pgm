@@ -22,8 +22,11 @@ def train(model, train_data: np.ndarray, valid_data: np.ndarray, batch_size: int
     losses_train = []
     losses_val = []
 
+    log_library_size = torch.log(torch.sum(X_train, dim=1))
+    prior_l_m, prior_l_v = torch.mean(log_library_size), torch.var(log_library_size)
+
     for epoch in range(epochs):
-        if verbose == 1:
+        if verbose >= 1:
             print("Starting epoch", epoch+1)
 
         X_train = X_train[torch.randperm(X_train.size()[0])]  # Shuffle data at each epoch
@@ -33,11 +36,12 @@ def train(model, train_data: np.ndarray, valid_data: np.ndarray, batch_size: int
         # Training loop
         for i in range(int(len(train_data)/batch_size) + 1):
             minibatch = X_train[i*batch_size:(i+1)*batch_size, :]
-            px_scale, px_r, px_rate, px_dropout, qz_m, qz_v, z, ql_m, ql_v, library = model(minibatch)
-            prior_l_m, prior_l_v = torch.zeros_like(qz_m), torch.ones_like(qz_v)  # TODO: Use correct prior
-            loss_train = model.loss(minibatch, qz_m, qz_v, ql_m, ql_v, prior_l_m, prior_l_v, px_r, px_rate, px_dropout)
+            px_scale, px_r, px_rate, px_dropout, qz_m, qz_v, z, ql_m, ql_v, log_library = model(minibatch)
+            _prior_l_m = prior_l_m * torch.ones_like(ql_m)
+            _prior_l_v = prior_l_v * torch.ones_like(ql_v)
+            loss_train = model.loss(minibatch, qz_m, qz_v, ql_m, ql_v, _prior_l_m, _prior_l_v, px_r, px_rate, px_dropout)
 
-            if verbose == 1:
+            if verbose == 2:
                 print("Minibatch", i+1, "/", int(len(train_data)/batch_size) + 1, "loss", loss_train.item())
 
             autograd.backward(loss_train, retain_graph=True)
@@ -50,39 +54,46 @@ def train(model, train_data: np.ndarray, valid_data: np.ndarray, batch_size: int
             lv = []
             for i in range(int(len(valid_data)/batch_size) + 1):
                 minibatch = X_valid[i*batch_size:(i+1)*batch_size, :]
-                px_scale, px_r, px_rate, px_dropout, qz_m, qz_v, z, ql_m, ql_v, library = model(minibatch)
-                prior_l_m, prior_l_v = torch.zeros_like(qz_m), torch.ones_like(qz_v)  # TODO: Use correct prior
-                lv.append(model.loss(minibatch, qz_m, qz_v, ql_m, ql_v, prior_l_m, prior_l_v, px_r, px_rate, px_dropout))
+                px_scale, px_r, px_rate, px_dropout, qz_m, qz_v, z, ql_m, ql_v, log_library = model(minibatch)
+                _prior_l_m = prior_l_m * torch.ones_like(ql_m)
+                _prior_l_v = prior_l_v * torch.ones_like(ql_v)
+                lv.append(model.loss(minibatch, qz_m, qz_v, ql_m, ql_v, _prior_l_m, _prior_l_v, px_r, px_rate, px_dropout))
 
-        loss_val = np.mean(lv)
+        loss_val = torch.mean(torch.tensor(lv)).item()
         if verbose == 1:
+            print("Training loss:", loss_train.item())
+        if verbose >= 1:
             print("Validation loss:", loss_val)
 
-        losses_train.append(loss_train)
+        losses_train.append(loss_train.item())
         losses_val.append(loss_val)
 
     return losses_train, losses_val
 
 
 if __name__ == "__main__":
-    x_train = np.load("./data/cortex_x_train.npy")
-    y_train = np.load("./data/cortex_y_train.npy")
-    x_test = np.load("./data/cortex_x_test.npy")
-    y_test = np.load("./data/cortex_y_test.npy")
+    path = "./data"
+    x_train = np.load(path + "/cortex_x_train.npy")
+    y_train = np.load(path + "/cortex_y_train.npy")
+    x_test = np.load(path + "/cortex_x_test.npy")
+    y_test = np.load(path + "/cortex_y_test.npy")
 
-    model = VAE(
-        input_dim=x_train.shape[1],
-        hidden_dim=128,
-        latent_dim=10,
-        n_layers=1,
-        dropout=0.2)
+    model = VAE(input_dim=x_train.shape[1])
 
-    pytorch_total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print("Total trainable parameters:", pytorch_total_params)
+    n_params = sum(p.numel() for p in model.parameters())
+    n_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print("Total parameters:", n_params)
+    print("Total trainable parameters:", n_trainable_params)
 
     batch_size = 32
-    epochs = 5
-    losses_train, losses_val = train(model, train_data=x_train, valid_data=x_test, batch_size=batch_size, epochs=epochs)
+    epochs = 1
+    losses_train, losses_val = train(
+        model,
+        train_data=x_train,
+        valid_data=x_test,
+        batch_size=batch_size,
+        epochs=epochs,
+        verbose=1)
 
     X_valid = torch.tensor(x_test).to(DEVICE)
 
