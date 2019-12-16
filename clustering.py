@@ -1,4 +1,5 @@
 import argparse
+from typing import Iterable, Union
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -41,12 +42,36 @@ def parse_args():
     return parser.parse_args()
 
 
-def plot_clustering(X, labels, legend=False, s=10, alpha=0.5):
-    for label in np.unique(labels):
-        plt.scatter(X[labels == label][:, 0], X[labels == label][:, 1], s=s, alpha=alpha)
+def plot_clustering(
+        X: Union[np.ndarray, Iterable],
+        labels: Union[np.ndarray, Iterable],
+        legend=False,
+        s=10,
+        alpha=0.5,
+):
+    if isinstance(X, np.ndarray):
+        X = [X]
+    elif isinstance(X, dict):
+        X = X.values()
+    assert all([isinstance(x, np.ndarray) for x in X]), "{}".format([type(x) for x in X])
 
-    if legend:
-        plt.legend(np.unique(labels))
+    if isinstance(labels, np.ndarray):
+        labels = [labels]
+    elif isinstance(labels, dict):
+        labels = labels.values()
+    assert all([isinstance(labels_, np.ndarray) for labels_ in labels])
+
+    fig, ax = plt.subplots(nrows=len(X), sharex=True, sharey=True)
+    ax = [ax] if len(X) == 1 else ax
+
+    for i, (x, labels_) in enumerate(zip(X, labels)):
+        print(i)
+        for label in np.unique(labels_):
+            ax[i].scatter(x[labels_ == label][:, 0], x[labels_ == label][:, 1], s=s, alpha=alpha)
+            ax[i].set_aspect('equal')
+
+        if legend:
+            ax[i].legend(np.unique(labels))
 
     plt.show()
 
