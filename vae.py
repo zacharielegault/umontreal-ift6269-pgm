@@ -50,21 +50,37 @@ def log_zinb_positive(x, mu, theta, pi, eps=1e-8):
     return res
 
 
-
 class VAE(nn.Module):
     def __init__(
         self,
         input_dim: int,
-        hidden_dim: int,
-        latent_dim: int,
-        n_layers: int,
-        dropout: float,
+        hidden_dim: int = 128,
+        latent_dim: int = 10,
+        n_layers: int = 1,
+        dropout: float = 0.1,
         activation: nn.Module = nn.ReLU(),
         use_bias: bool = True,
         use_batch_norm: bool = True,
-        use_log_variational = True,
+        use_log_variational: bool = True,
         dispersion: str = "gene",
+        kl_z_weight: float = 1,
+        kl_l_weight: float = 1,
     ):
+        """
+
+        :param input_dim: integer, number of input nodes
+        :param hidden_dim: integer, number of nodes on each hidden layer
+        :param latent_dim: integer, number of nodes in latent space
+        :param n_layers: integer, number of layers for encoder and decoder (excluding input/output and latent)
+        :param dropout: float, dropout probability
+        :param activation: nn.Module, activation function object
+        :param use_bias: boolean, use bias or not in linear layers
+        :param use_batch_norm: boolean, use batch normalization or not in encoder
+        :param use_log_variational: boolean, use log(1+x) as input for numerical stability
+        :param dispersion: string, type of dispersion parameter. Must be "gene" of "gene cell"
+        :param kl_z_weight: float, weight to give the z KL divergence in the loss function
+        :param kl_l_weight: float, weight to give the l KL divergence in the loss function
+        """
         super().__init__()
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
@@ -76,14 +92,16 @@ class VAE(nn.Module):
         self.use_batch_norm = use_batch_norm
         self.use_log_variational = use_log_variational
         self.dispersion = dispersion
+        self.kl_z_weight = kl_z_weight
+        self.kl_l_weight = kl_l_weight
 
         if self.dispersion == "gene":
             self.px_r = torch.nn.Parameter(torch.randn(input_dim), requires_grad=True)
         elif self.dispersion == "gene-cell":
             pass
         else:
-            raise ValueError("dispersion must be one of 'gene' or 'gene-cell' but input was {}".format(self.dispersion)
-            )
+            raise ValueError("dispersion must be one of 'gene' or 'gene-cell' but input was "
+                             "'{}'".format(self.dispersion))
 
         self.z_encoder = Encoder(
             input_dim=self.input_dim,
@@ -100,7 +118,7 @@ class VAE(nn.Module):
             input_dim=self.input_dim,
             hidden_dim=self.hidden_dim,
             output_dim=1,
-            n_layers=1,  # The original implementation only uses 1 hidden layer
+            n_layers=self.n_layers,
             dropout=self.dropout,
             activation=self.activation,
             use_bias=self.use_bias,
@@ -115,17 +133,20 @@ class VAE(nn.Module):
             dropout=self.dropout,  # TODO: Check if dropout should be 0
             activation=self.activation,
             use_bias=self.use_bias,
-            use_batch_norm=self.use_batch_norm,
+            use_batch_norm=False,  # No batch normalization on the decoder
         )
 
     def forward(self, x: torch.Tensor):
+        if self.use_log_variational:
+            x = torch.log(1 + x)
+
         qz_m, qz_v, z = self.z_encoder(x)
-        ql_m, ql_v, library = self.l_encoder(x)
-        px_scale, px_r, px_rate, px_dropout = self.decoder(z=z, library=library, dispersion=self.dispersion)
+        ql_m, ql_v, log_library = self.l_encoder(x)
+        px_scale, px_r, px_rate, px_dropout = self.decoder(z=z, log_library=log_library, dispersion=self.dispersion)
         if self.dispersion == "gene":
             px_r = self.px_r
         px_r = torch.exp(px_r)
-        return px_scale, px_r, px_rate, px_dropout, qz_m, qz_v, z, ql_m, ql_v, library
+        return px_scale, px_r, px_rate, px_dropout, qz_m, qz_v, z, ql_m, ql_v, log_library
 
     def loss(self, x, qz_m, qz_v, ql_m, ql_v, prior_l_m, prior_l_v, px_r, px_rate, px_dropout):
         prior_z_m = torch.zeros_like(qz_m)
@@ -146,13 +167,13 @@ def get_fc_layers(
     use_batch_norm: bool = True,
 ):
     return nn.Sequential(
-            OrderedDict([("Layer {}".format(i), nn.Sequential(
-                nn.Linear(in_features, out_features, bias=use_bias),
-                nn.BatchNorm1d(out_features, momentum=0.03, eps=0.001) if use_batch_norm else None,
-                activation,
-                nn.Dropout(p=dropout) if dropout > 0 else None)
-            ) for i, (in_features, out_features) in enumerate(zip(layers_dim[:-1], layers_dim[1:]))])
-        )
+        OrderedDict([("Layer {}".format(i), nn.Sequential(
+            nn.Linear(in_features, out_features, bias=use_bias),
+            nn.BatchNorm1d(out_features, momentum=0.03, eps=0.001) if use_batch_norm else None,
+            activation,
+            nn.Dropout(p=dropout) if dropout > 0 else None)
+        ) for i, (in_features, out_features) in enumerate(zip(layers_dim[:-1], layers_dim[1:]))])
+    )
 
 
 class Encoder(nn.Module):
@@ -193,7 +214,7 @@ class Encoder(nn.Module):
                     q = layer(q)
 
         q_mean = self.mean_encoder(q)
-        q_var = torch.exp(self.var_encoder(q))  # Add 1e-4?
+        q_var = torch.exp(self.var_encoder(q)) + 1e-4
         latent = self.reparameterize(q_mean, q_var)
         return q_mean, q_var, latent
 
@@ -227,22 +248,21 @@ class Decoder(nn.Module):
             nn.Softmax(dim=-1)
         )
 
-        # dispersion
+        # Dispersion parameter for gene-cell dispersion
         self.px_r_decoder = nn.Linear(hidden_dim, output_dim)
 
-        # ZI dropout
+        # ZI dropout, gives the logit of the Bernoulli
         self.px_dropout_decoder = nn.Linear(hidden_dim, output_dim)
 
-    def forward(self, z: torch.Tensor, library: torch.Tensor, dispersion: str):
+    def forward(self, z: torch.Tensor, log_library: torch.Tensor, dispersion: str):
         px = z
         for layers in self.fc_layers:
             for layer in layers:
                 if layer is not None:
-                    # print(layer._get_name(), px.shape)
                     px = layer(px)
 
         px_scale = self.px_scale_decoder(px)
         px_dropout = self.px_dropout_decoder(px)
-        px_rate = torch.exp(library) * px_scale
+        px_rate = torch.exp(log_library) * px_scale
         px_r = self.px_r_decoder(px) if dispersion == "gene-cell" else None
         return px_scale, px_r, px_rate, px_dropout
