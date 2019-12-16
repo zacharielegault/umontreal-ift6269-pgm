@@ -85,11 +85,11 @@ class scVI_vae(nn.Module) :
         
         return qz, mu_z, sigma_z, ql, mu_l, sigma_l, mu, h
 
-    def loss(self, x, qz, mu_z, sigma_z, ql, mu_l, sigma_l, mu, h):
+    def loss(self, x, qz, mu_z, sigma_z, ql, mu_l, sigma_l, mu, h, prior_l_m, prior_l_v):
         z_prior = Normal(torch.zeros_like(mu_z), torch.ones_like(sigma_z))
         kl_z = kl_divergence(qz, z_prior).sum(dim=1)
 
-        l_prior =  Normal(torch.zeros_like(mu_l), torch.ones_like(sigma_l))
+        l_prior = Normal(prior_l_m*torch.ones_like(mu_l), prior_l_v.sqrt()*torch.ones_like(sigma_l))
         kl_l = kl_divergence(ql, l_prior).sum(dim=1)
         theta = torch.exp(self.log_theta)
         #reconst_loss = self.zinb_ll(x, h, theta, mu)
@@ -179,27 +179,29 @@ def train_scvi(model, train_set, val_set, n_batches = 32, n_epochs = 300, lr = 0
     losses_train = []
     losses_val = []
 
+    train_set_shuff = torch.tensor(train_set).to(device)
+    log_library_size = torch.log(torch.sum(train_set_shuff, dim=1))
+    prior_l_m, prior_l_v = torch.mean(log_library_size), torch.var(log_library_size)
+
     # training
     for epoch in range(n_epochs):
-        #np.random.shuffle(train_set)
-        train_set_shuff = torch.tensor(train_set).to(device)
-
+        train_set_shuff = train_set_shuff[torch.randperm(train_set_shuff.size()[0])]  # Shuffle data at each epoch
         model.train()
         for i in range(int(len(train_set)/n_batches) + 1):
             minibatch = train_set_shuff[i * n_batches:(i+1) * n_batches, :]
             qz, mu_z, sigma_z, ql, mu_l, sigma_l, mu, h = model(minibatch)  # forward pass
-            loss_train = model.loss(minibatch, qz, mu_z, sigma_z, ql, mu_l, sigma_l, mu, h)  # compute ELBO
+            loss_train = model.loss(minibatch, qz, mu_z, sigma_z, ql, mu_l, sigma_l, mu, h, prior_l_m, prior_l_v)  # compute ELBO
             autograd.backward(loss_train, retain_graph=True)  # backward pass
             adam.step()  # paramters update
             adam.zero_grad()  # put the gradients back to zero for the next mini-batch
-               
+
         model.eval()
         with torch.set_grad_enabled(False) :
             for i in range(int(len(val_set)/n_batches)):
                 minibatch = val_set[i * n_batches:(i+1) * n_batches, :]
                 qz, mu_z, sigma_z, ql, mu_l, sigma_l, mu, h = model(minibatch)
                 loss_val = model.loss(minibatch, qz, mu_z, sigma_z, ql, mu_l, sigma_l, mu, h)
-        
+
         losses_train.append(loss_train)
         losses_val.append(loss_val)
 
