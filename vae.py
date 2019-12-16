@@ -135,27 +135,7 @@ class VAE(nn.Module):
 
         reconst_loss = log_zinb_positive(x, px_rate, px_r, px_dropout).sum(dim=-1)
 
-        return torch.mean(- reconst_loss + kl_z + kl_l)
-
-    def inference(self, x, n_samples=1):
-        qz_m, qz_v, z = self.z_encoder(x)
-        ql_m, ql_v, library = self.l_encoder(x)
-
-        if n_samples > 1:
-            def resize(x, n_samples):
-                return x.unsqueeze(0).expand((n_samples, x.size(0), x.size(1)))
-
-            qz_m = resize(qz_m, n_samples)
-            qz_v = resize(qz_v, n_samples)
-            z = Normal(qz_m, qz_v.sqrt()).sample()
-
-            ql_m = resize(ql_m, n_samples)
-            ql_v = resize(ql_v, n_samples)
-            library = Normal(ql_m, ql_v.sqrt()).sample()
-
-        px_scale, px_r, px_rate, px_dropout = self.decoder(z=z, library=library, dispersion=self.dispersion)
-
-        return px_scale, px_r, px_rate, px_dropout, qz_m, qz_v, z, ql_m, ql_v, library
+        return torch.mean(- reconst_loss + kl_z*self.kl_z_weight + kl_l*self.kl_l_weight)
 
 
 def get_fc_layers(
