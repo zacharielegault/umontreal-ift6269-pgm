@@ -200,7 +200,7 @@ def train_scvi(model, train_set, val_set, n_batches = 32, n_epochs = 300, lr = 0
             for i in range(int(len(val_set)/n_batches)):
                 minibatch = val_set[i * n_batches:(i+1) * n_batches, :]
                 qz, mu_z, sigma_z, ql, mu_l, sigma_l, mu, h = model(minibatch)
-                loss_val = model.loss(minibatch, qz, mu_z, sigma_z, ql, mu_l, sigma_l, mu, h)
+                loss_val = model.loss(minibatch, qz, mu_z, sigma_z, ql, mu_l, sigma_l, mu, h, prior_l_m, prior_l_v)
 
         losses_train.append(loss_train)
         losses_val.append(loss_val)
