@@ -48,6 +48,7 @@ def plot_clustering(
         legend=False,
         s=10,
         alpha=0.5,
+        save_path=None,
 ):
     if isinstance(X, np.ndarray):
         X = [X]
@@ -71,19 +72,24 @@ def plot_clustering(
             ax[i].set_aspect('equal')
 
         if legend:
-            ax[i].legend(np.unique(labels))
+            box = ax[i].get_position()
+            ax[i].legend(np.unique(labels), loc='center left', bbox_to_anchor=(1, 0.5))
+            ax[i].set_position([box.x0, box.y0, box.width * 0.8, box.height])
+
+    if save_path is not None:
+        fig.savefig(save_path, dpi=300, bbox_inches="tight")
 
     plt.show()
 
 
-def visualize(z, y):
+def visualize(z, y, legend=False):
     if z.shape[1] == 2:
         plot_clustering(z, y)
     elif args.pca:
         pca = PCA(2)
-        plot_clustering(pca.fit_transform(z), y)
+        plot_clustering(pca.fit_transform(z), y, legend=legend)
     else:
-        plot_clustering(TSNE(n_components=2).fit_transform(z), y)
+        plot_clustering(TSNE(n_components=2).fit_transform(z), y, legend=legend)
 
 
 def accuracy(true_labels, pred_labels):
@@ -150,18 +156,24 @@ if __name__ == "__main__":
                 max_iter=100,
                 n_init=10,
                 init_params='kmeans')),
-        "dbscan": ClusteringMethod(
-            DBSCAN(
-                eps=0.5,
-                min_samples=10,
-                metric='canberra',
-                n_jobs=-1))
+        #"dbscan": ClusteringMethod(
+        #    DBSCAN(
+        #        eps=0.5,
+        #        min_samples=10,
+        #        metric='canberra',
+        #        n_jobs=-1))
     }
 
-    # TODO: change data import when single-cell data is available
-    z = np.loadtxt("hwk3data/EMGaussian.train")
-    y = np.loadtxt("hwk3data/HMMlabels.train")
-    visualize(z, y)
+    path = "./data"
+    z = np.load("validation_latent.npy")
+    y = np.load(path + "/cortex_y_test.npy").astype(np.float32)
+    names = ['astrocytes ependymal', 'endothelial mural', 'interneurons', 'microglia', 'oligodendrocytes',
+             'pyramidal CA1', 'pyramidal SS']
+    labels = y.astype(np.str)
+    for i in range(7):
+        labels[y == i] = names[i]
+
+    visualize(z, labels, legend=True)
 
     for name, method in methods.items():
         print(name)
